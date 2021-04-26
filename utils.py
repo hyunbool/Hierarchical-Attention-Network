@@ -1,6 +1,29 @@
 import torch
 from torch.utils.data import DataLoader
 
+import torch
+from torch import nn
+import numpy as np
+from collections import Counter
+from nltk.tokenize import PunktSentenceTokenizer, TreebankWordTokenizer
+from tqdm import tqdm
+import pandas as pd
+import itertools
+import os
+import json
+import gensim
+import logging
+from torch.utils.data import DataLoader
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+classes = ['positive', 'negative']
+label_map = {k: v for v, k in enumerate(classes)}
+rev_label_map = {v: k for k, v in label_map.items()}
+
+# Tokenizers
+sent_tokenizer = PunktSentenceTokenizer()
+word_tokenizer = TreebankWordTokenizer()
 BATCH_SIZE = 16
 
 
@@ -53,3 +76,19 @@ def test(data_, device, model, criterion):
             acc += (output.argmax(1) == cls).sum().item()
 
     return loss / len(data_), acc / len(data_)
+
+
+def collate_batch(batch):
+    label_list, text_list, offsets = [], [], [0]
+    for (_label, _text) in batch:
+        # label_list: 처리한 문장 라벨 넣기
+        label_list.append(label_pipeline(_label))
+        processed_text = torch.tensor(text_pipeline(_text), dtype=torch.int64)
+        # text_list: 처리한 문장 넣기
+        text_list.append(processed_text)
+        #print(processed_text)
+        offsets.append(processed_text.size(0))
+    label_list = torch.tensor(label_list, dtype=torch.int64)
+    offsets = torch.tensor(offsets[:-1]).cumsum(dim=0)
+    text_list = torch.cat(text_list)
+    return label_list.to(device), text_list.to(device), offsets.to(device)

@@ -1,34 +1,27 @@
 import torch
 import torchtext
-
+from torchtext.datasets import text_classification
+NGRAMS = 2
 import os
-from model import HierarchialAttentionNetwork
-from utils import generate_batch, train_func, test
+from model import TextClassification
+from utils import train_func, test
 import time
 from torch.utils.data.dataset import random_split
 
 
-
-
+if not os.path.isdir('./.data'):
+    os.mkdir('./.data')
+train_dataset, test_dataset = text_classification.DATASETS['AG_NEWS'](
+    root='./.data', ngrams=NGRAMS, vocab=None)
 BATCH_SIZE = 16
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+VOCAB_SIZE = len(train_dataset.get_vocab())
 EMBED_DIM = 32
+NUN_CLASS = len(train_dataset.get_labels())
+model = TextClassification(VOCAB_SIZE, EMBED_DIM, NUN_CLASS).to(device)
 N_EPOCHS = 5
 min_valid_loss = float('inf')
-
-vocab_size = len(train_dataset.get_vocab())
-emb_size = train_dataset.get_em
-n_classes = len(train_dataset.get_labels())
-
-model = HierarchialAttentionNetwork(n_classes=n_classes,
-                                    vocab_size=vocab_size,
-                                    emb_size=emb_size,
-                                    word_rnn_size=word_rnn_size,
-                                    sentence_rnn_size=sentence_rnn_size,
-                                    word_rnn_layers=word_rnn_layers,
-                                    sentence_rnn_layers=sentence_rnn_layers,
-                                    word_att_size=word_att_size,
-                                    sentence_att_size=sentence_att_size,
-                                    dropout=dropout).to(device)
 
 criterion = torch.nn.CrossEntropyLoss().to(device)
 optimizer = torch.optim.SGD(model.parameters(), lr=4.0)
@@ -41,8 +34,8 @@ sub_train_, sub_valid_ = \
 for epoch in range(N_EPOCHS):
 
     start_time = time.time()
-    train_loss, train_acc = train_func(sub_train_, optimizer, device, model, criterion, scheduler)
-    valid_loss, valid_acc = test(sub_valid_, device, model, criterion)
+    train_loss, train_acc = train_func(sub_train_)
+    valid_loss, valid_acc = test(sub_valid_)
 
     secs = int(time.time() - start_time)
     mins = secs / 60

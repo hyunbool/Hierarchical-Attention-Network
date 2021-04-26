@@ -1,94 +1,30 @@
-import torch
-from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
-import torch
-from torch import nn
-import numpy as np
-from collections import Counter
-from nltk.tokenize import PunktSentenceTokenizer, TreebankWordTokenizer
-from tqdm import tqdm
-import pandas as pd
-import itertools
-import os
-import json
-import gensim
-import logging
-from torch.utils.data import DataLoader
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-classes = ['positive', 'negative']
-label_map = {k: v for v, k in enumerate(classes)}
-rev_label_map = {v: k for k, v in label_map.items()}
-
-# Tokenizers
-sent_tokenizer = PunktSentenceTokenizer()
-word_tokenizer = TreebankWordTokenizer()
-BATCH_SIZE = 16
-
-
-def generate_batch(batch):
-    label = torch.tensor([entry[0] for entry in batch])
-    text = [entry[1] for entry in batch]
-    offsets = [0] + [len(entry) for entry in text]
-    # torch.Tensor.cumsum은 dim 차원의 요소들의 누적 합계를 반환합니다.
-    # torch.Tensor([1.0, 2.0, 3.0]).cumsum(dim=0)
-
-    offsets = torch.tensor(offsets[:-1]).cumsum(dim=0)
-    text = torch.cat(text)
-    return text, offsets, label
-
-
-def train_func(sub_train_, optimizer, device, model, criterion, scheduler):
-
-    # Train the model
-    # 모델을 학습합니다
-    train_loss = 0
-    train_acc = 0
-
-    data = DataLoader(sub_train_, batch_size=BATCH_SIZE, shuffle=True,
-                      collate_fn=generate_batch)
-    for i, (text, offsets, cls) in enumerate(data):
+def train(model, optimizer, train_iter, DEVICE):
+    model.train()
+    for b, batch in enumerate(train_iter):
+        x, y = batch.text.to(DEVICE), batch.label.to(DEVICE)
+        y.data.sub_(1)  # 레이블 값을 0과 1로 변환
         optimizer.zero_grad()
-        text, offsets, cls = text.to(device), offsets.to(device), cls.to(device)
-        output = model(text, offsets)
-        loss = criterion(output, cls)
-        train_loss += loss.item()
+
+        logit = model(x)
+        loss = F.cross_entropy(logit, y)
         loss.backward()
         optimizer.step()
-        train_acc += (output.argmax(1) == cls).sum().item()
-
-    # 학습률을 조절합니다
-    scheduler.step()
-
-    return train_loss / len(sub_train_), train_acc / len(sub_train_)
-
-def test(data_, device, model, criterion):
-    loss = 0
-    acc = 0
-    data = DataLoader(data_, batch_size=BATCH_SIZE, collate_fn=generate_batch)
-    for text, offsets, cls in data:
-        text, offsets, cls = text.to(device), offsets.to(device), cls.to(device)
-        with torch.no_grad():
-            output = model(text, offsets)
-            loss = criterion(output, cls)
-            loss += loss.item()
-            acc += (output.argmax(1) == cls).sum().item()
-
-    return loss / len(data_), acc / len(data_)
 
 
-def collate_batch(batch):
-    label_list, text_list, offsets = [], [], [0]
-    for (_label, _text) in batch:
-        # label_list: 처리한 문장 라벨 넣기
-        label_list.append(label_pipeline(_label))
-        processed_text = torch.tensor(text_pipeline(_text), dtype=torch.int64)
-        # text_list: 처리한 문장 넣기
-        text_list.append(processed_text)
-        #print(processed_text)
-        offsets.append(processed_text.size(0))
-    label_list = torch.tensor(label_list, dtype=torch.int64)
-    offsets = torch.tensor(offsets[:-1]).cumsum(dim=0)
-    text_list = torch.cat(text_list)
-    return label_list.to(device), text_list.to(device), offsets.to(device)
+def evaluate(model, val_iter, DEVICE):
+    """evaluate model"""
+    model.eval()
+    corrects, total_loss = 0, 0
+    for batch in val_iter:
+        x, y = batch.text.to(DEVICE), batch.label.to(DEVICE)
+        y.data.sub_(1) # 레이블 값을 0과 1로 변환
+        logit = model(x)
+        loss = F.cross_entropy(logit, y, reduction='sum')
+        total_loss += loss.item()
+        corrects += (logit.max(1)[1].view(y.size()).data == y.data).sum()
+    size = len(val_iter.dataset)
+    avg_loss = total_loss / size
+    avg_accuracy = 100.0 * corrects / size
+    return avg_loss, avg_accuracy

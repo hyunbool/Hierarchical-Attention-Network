@@ -24,8 +24,7 @@ def dataset(BATCH_SIZE):
     #train_df = pd.read_csv('./.data/train.csv')
     #test_df = pd.read_csv('./.data/test.csv')
 
-    train_data, test_data = TabularDataset.splits(path='.', train='./.data/train.csv', test='./.data/test.csv', format='csv',
-                                                 fields=[('text', TEXT), ('label', LABEL)], skip_header=False)
+    train_data, test_data = TabularDataset.splits(path='.', train='./.data/train.csv', test='./.data/test.csv', format='csv', fields=[('text', TEXT), ('label', LABEL)], skip_header=False)
 
     # 단어 집합 만들기
     TEXT.build_vocab(train_data, min_freq=10, max_size=10000)
@@ -37,7 +36,7 @@ def dataset(BATCH_SIZE):
     train_data, val_data = train_data.split(split_ratio=0.8)
     train_iter, val_iter, test_iter = data.BucketIterator.splits(
             (train_data, val_data, test_data), batch_size=BATCH_SIZE,
-            shuffle=True, repeat=False)
+            shuffle=True, repeat=False, sort=False)
 
 
     train_loader = Iterator(dataset=train_data, batch_size=BATCH_SIZE)

@@ -2,13 +2,12 @@ import torch
 NGRAMS = 2
 import os
 from model import GRU, HierarchialAttentionNetwork
-from utils import *
-from dataset import *
+from utils import train, evaluate
+from dataset import HANDataset, load_word2vec_embeddings
 import json
 
 USE_CUDA = torch.cuda.is_available()
-DEVICE = torch.device("cuda" if USE_CUDA else "cpu")
-print("cpu와 cuda 중 다음 기기로 학습함:", DEVICE)
+device = torch.device("cuda" if USE_CUDA else "cpu")
 
 data_path = "./data/"
 
@@ -26,13 +25,11 @@ with open(data_path + 'word_map.json', 'r') as j:
     word_map = json.load(j)
 
 # 하이퍼파라미터
-BATCH_SIZE = 16
+batch_size = 16
 LEARNING_RATE = 0.001
-EPOCHS = 5
-N_CLASSES = 2
-EMBED_DIM = 32
-
-# Model parameters
+epochs = 5
+n_classes = 2
+embed_dim = 32
 word_rnn_size = 50  # word RNN size
 sentence_rnn_size = 50  # character RNN size
 word_rnn_layers = 1  # number of layers in character RNN
@@ -46,15 +43,9 @@ workers = 4
 
 
 embeddings, emb_size = load_word2vec_embeddings(word2vec_file, word_map)  # load pre-trained word2vec embeddings
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-
-#model = GRU(1, 256, vocab_size, 128, N_CLASSES, 0.5).to(device)
-model = HierarchialAttentionNetwork(n_classes=N_CLASSES,
+model = HierarchialAttentionNetwork(n_classes=n_classes,
                                     vocab_size=vocab_size,
-                                    emb_size=EMBED_DIM,
+                                    emb_size=embed_dim,
                                     word_rnn_size=word_rnn_size,
                                     sentence_rnn_size=sentence_rnn_size,
                                     word_rnn_layers=word_rnn_layers,
@@ -68,20 +59,22 @@ optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 criterion = torch.nn.CrossEntropyLoss().to(device)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.9)
 
-train_loader = torch.utils.data.DataLoader(HANDataset(data_path, 'train'), batch_size=BATCH_SIZE, shuffle=True,
+train_loader = torch.utils.data.DataLoader(HANDataset(data_path, 'train'), batch_size=batch_size, shuffle=True,
                                            num_workers=workers, pin_memory=True)
-test_loader = torch.utils.data.DataLoader(HANDataset(data_path, 'test'), batch_size=BATCH_SIZE, shuffle=True,
+valid_loader = torch.utils.data.DataLoader(HANDataset(data_path, 'valid'), batch_size=batch_size, shuffle=True,
+                                           num_workers=workers, pin_memory=True)
+test_loader = torch.utils.data.DataLoader(HANDataset(data_path, 'test'), batch_size=batch_size, shuffle=True,
                                            num_workers=workers, pin_memory=True)
 
 best_val_loss = None
-for e in range(1, EPOCHS+1):
+for e in range(1, epochs+1):
     train(train_loader=train_loader,
           model=model,
           criterion=criterion,
           optimizer=optimizer,
-          epoch=EPOCHS,
-          device=DEVICE)
-    val_loss, val_accuracy = evaluate(model=model, test_loader=test_loader, criterion=criterion, device=DEVICE)
+          epoch=epochs,
+          device=device)
+    val_loss, val_accuracy = evaluate(model=model, test_loader=valid_loader, criterion=criterion, device=device)
 
     # 검증 오차가 가장 적은 최적의 모델을 저장
     for param_group in optimizer.param_groups:
@@ -92,7 +85,7 @@ for e in range(1, EPOCHS+1):
     # 검증 오차가 가장 적은 최적의 모델을 저장
     if not best_val_loss or val_loss < best_val_loss:
         # Save checkpoint
-        state = {'epoch': EPOCHS,
+        state = {'epoch': epochs,
                  'model': model,
                  'optimizer': optimizer,
                  'word_map': word_map}

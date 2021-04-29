@@ -6,7 +6,7 @@ from nltk.tokenize import PunktSentenceTokenizer, TreebankWordTokenizer
 from tqdm import tqdm
 import pandas as pd
 import itertools
-import os
+from sklearn.model_selection import train_test_split
 import json
 import gensim
 import logging
@@ -38,7 +38,7 @@ class HANDataset(Dataset):
         :param split: split, one of 'TRAIN' or 'TEST'
         """
         split = split.upper()
-        assert split in {'TRAIN', 'TEST'}
+        assert split in {'TRAIN', 'VALID', 'TEST'}
         self.split = split
 
         # Load data
@@ -56,13 +56,6 @@ class HANDataset(Dataset):
 
 
 def preprocess(text):
-    """
-    Pre-process text for use in the model. This includes lower-casing, standardizing newlines, removing junk.
-
-    :param text: a string
-    :return: cleaner string
-    """
-
     if isinstance(text, float):
         return ''
 
@@ -116,24 +109,15 @@ def read_csv(csv_folder, split, sentence_limit, word_limit):
 def create_input_files(csv_folder, output_folder, sentence_limit, word_limit, min_word_count=5,
                        save_word2vec_data=True):
     """
-    Create data files to be used for training the model.
-
-    :param csv_folder: folder where the CSVs with the raw data are located
-    :param output_folder: folder where files must be created
-    :param sentence_limit: truncate long documents to these many sentences
-    :param word_limit: truncate long sentences to these many words
-    :param min_word_count: discard rare words which occur fewer times than this number
-    :param save_word2vec_data: whether to save the data required for training word2vec embeddings
+    training
     """
     # Read training data
-    print('\nReading and preprocessing training data...\n')
     train_docs, train_labels, word_counter = read_csv(csv_folder, 'train', sentence_limit, word_limit)
 
-
-    # Save text data for word2vec
+    # word2vec 위한 데이터 저장
     if save_word2vec_data:
         torch.save(train_docs, os.path.join(output_folder, 'word2vec_data.pth.tar'))
-        print('\nText data for word2vec saved to %s.\n' % os.path.abspath(output_folder))
+
 
     # Create word map
     word_map = dict()
@@ -144,31 +128,32 @@ def create_input_files(csv_folder, output_folder, sentence_limit, word_limit, mi
 
     word_map['<unk>'] = len(word_map) # 가장 마지막 인덱스가 <unk>
 
-    print('\nDiscarding words with counts less than %d, the size of the vocabulary is %d.\n' % (
-        min_word_count, len(word_map)))
-
     with open(os.path.join(output_folder, 'word_map.json'), 'w') as j:
         json.dump(word_map, j)
 
 
-    print('Word map saved to %s.\n' % os.path.abspath(output_folder))
-
-    # Encode and pad
-    print('Encoding and padding training data...\n')
-
-    # 단어가 word_map에 있으면 해당 key 리턴하고 없으면 <unk>의 key 리턴
-    # word_map.get(x, word_map['<unk>'])
-    encoded_train_docs = list(map(lambda doc: list(map(lambda s: list(map(lambda w: word_map.get(w, word_map['<unk>']), s)) + [0] * (word_limit - len(s)), doc)) + [[0] * word_limit] * (sentence_limit - len(doc)), train_docs))
+    # 검증 데이터 나누기
+    train_docs, valid_docs, train_labels, valid_labels = train_test_split(train_docs, train_labels, test_size=0.3)
 
 
     sentences_per_train_document = list(map(lambda doc: len(doc), train_docs))
-    print("sentences_per_train_document:", sentences_per_train_document)
-    words_per_train_sentence = list(
-        map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (sentence_limit - len(doc)), train_docs))
+    words_per_train_sentence = list(map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (sentence_limit - len(doc)), train_docs))
+    sentences_per_valid_document = list(map(lambda doc: len(doc), valid_docs))
+    words_per_valid_sentence = list(map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (sentence_limit - len(doc)), valid_docs))
 
-    # Save
-    print('Saving...\n')
+    # 단어가 word_map에 있으면 해당 key 리턴하고 없으면 <unk>의 key 리턴
+    # word_map.get(x, word_map['<unk>'])
+    encoded_train_docs = list(map(lambda doc: list(
+        map(lambda s: list(map(lambda w: word_map.get(w, word_map['<unk>']), s)) + [0] * (word_limit - len(s)),
+            doc)) + [[0] * word_limit] * (sentence_limit - len(doc)), train_docs))
+    encoded_val_docs = list(map(lambda doc: list(
+        map(lambda s: list(map(lambda w: word_map.get(w, word_map['<unk>']), s)) + [0] * (word_limit - len(s)),
+            doc)) + [[0] * word_limit] * (sentence_limit - len(doc)), valid_docs))
+
+
     assert len(encoded_train_docs) == len(train_labels) == len(sentences_per_train_document) == len(words_per_train_sentence)
+    assert len(encoded_val_docs) == len(valid_labels) == len(sentences_per_valid_document) == len(words_per_valid_sentence)
+
 
     # Because of the large data, saving as a JSON can be very slow
     torch.save({'docs': encoded_train_docs,
@@ -176,11 +161,21 @@ def create_input_files(csv_folder, output_folder, sentence_limit, word_limit, mi
                 'sentences_per_document': sentences_per_train_document,
                 'words_per_sentence': words_per_train_sentence},
                os.path.join(output_folder, 'TRAIN_data.pth.tar'))
-    print('Encoded, padded training data saved to %s.\n' % os.path.abspath(output_folder))
+    torch.save({'docs': encoded_val_docs,
+                'labels': valid_labels,
+                'sentences_per_document': sentences_per_valid_document,
+                'words_per_sentence': words_per_valid_sentence},
+               os.path.join(output_folder, 'VALID_data.pth.tar'))
 
     # Free some memory
     del train_docs, encoded_train_docs, train_labels, sentences_per_train_document, words_per_train_sentence
+    del valid_docs, encoded_val_docs, valid_labels, sentences_per_valid_document, words_per_valid_sentence
 
+
+
+    """
+    testing
+    """
     # Read test data
     print('Reading and preprocessing test data...\n')
     test_docs, test_labels, _ = read_csv(csv_folder, 'test', sentence_limit, word_limit)
@@ -279,3 +274,8 @@ def load_word2vec_embeddings(word2vec_file, word_map):
 
     return embeddings, w2v.vector_size
 
+create_input_files(csv_folder='./data',
+                   output_folder='./data',
+                   sentence_limit=15,
+                   word_limit=20,
+                   min_word_count=5)

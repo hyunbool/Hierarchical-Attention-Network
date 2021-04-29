@@ -62,7 +62,7 @@ def preprocess(text):
     return text.lower().replace('<br />', '\n').replace('<br>', '\n').replace('\\n', '\n').replace('&#xd;', '\n')
 
 
-def read_csv(csv_folder, split, sentence_limit, word_limit):
+def read_csv(csv_folder, split, segment_limit, sentence_limit, word_limit):
     """
     Read CSVs containing raw training data, clean documents and labels, and do a word-count.
 
@@ -77,42 +77,47 @@ def read_csv(csv_folder, split, sentence_limit, word_limit):
     docs = []
     labels = []
     word_counter = Counter()
-    data = pd.read_csv(os.path.join(csv_folder, split + '.csv'), header=None)
+    data = pd.read_csv(os.path.join(csv_folder, "short_concat_" + split + '.csv'), header=None)
     for i in tqdm(range(data.shape[0])):
+        # 전체 문서
         row = list(data.loc[i, :])
+        segments = list()
+        text = row[0]
 
+        # 각 문단을 문장 단위로 잘라 저장
+        for paragraph in preprocess(text).splitlines():
+            segments.append([s for s in sent_tokenizer.tokenize(paragraph)])
+
+        # 단어 단위로 토크나이징
         sentences = list()
 
-        text = row[0]
-        for paragraph in preprocess(text).splitlines():
-            sentences.extend([s for s in sent_tokenizer.tokenize(paragraph)])
-
-        #print("sentences: ", sentences)
-        words = list()
-        for s in sentences[:sentence_limit]:
-            w = word_tokenizer.tokenize(s)[:word_limit]
-            # If sentence is empty (due to removing punctuation, digits, etc.)
-            if len(w) == 0:
-                continue
-            words.append(w)
-            word_counter.update(w)
+        for paragraph in segments[:segment_limit]:
+            words = list()
+            for s in paragraph[:sentence_limit]:
+                w = word_tokenizer.tokenize(s)[:word_limit]
+                # If sentence is empty (due to removing punctuation, digits, etc.)
+                if len(w) == 0:
+                    continue
+                words.append(w)
+                word_counter.update(w)
+            sentences.append(words)
         # If all sentences were empty
         if len(words) == 0:
             continue
 
         labels.append(int(row[1]))  # since labels are 1-indexed in the CSV
-        docs.append(words)
+        docs.append(sentences)
 
     return docs, labels, word_counter
 
 
-def create_input_files(csv_folder, output_folder, sentence_limit, word_limit, min_word_count=5,
+def create_input_files(csv_folder, output_folder, segment_limit, sentence_limit, word_limit, min_word_count=5,
                        save_word2vec_data=True):
     """
     training
     """
     # Read training data
-    train_docs, train_labels, word_counter = read_csv(csv_folder, 'train', sentence_limit, word_limit)
+    train_docs, train_labels, word_counter = read_csv(csv_folder, 'train', segment_limit, sentence_limit, word_limit)
 
     # word2vec 위한 데이터 저장
     if save_word2vec_data:
@@ -131,45 +136,47 @@ def create_input_files(csv_folder, output_folder, sentence_limit, word_limit, mi
     with open(os.path.join(output_folder, 'word_map.json'), 'w') as j:
         json.dump(word_map, j)
 
+    print("train docs: ", len(train_docs))
+    print("="*50)
 
     # 검증 데이터 나누기
     train_docs, valid_docs, train_labels, valid_labels = train_test_split(train_docs, train_labels, test_size=0.3)
 
+    segments_per_train_document = list(map(lambda doc: len(doc), train_docs))
+    sentences_per_train_segment = list(map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (segment_limit - len(doc)), train_docs))
+    words_per_train_sentences = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: len(sent), seg)) + [0] * (sentence_limit - len(seg)) , doc)), train_docs))
 
-    sentences_per_train_document = list(map(lambda doc: len(doc), train_docs))
-    words_per_train_sentence = list(map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (sentence_limit - len(doc)), train_docs))
-    sentences_per_valid_document = list(map(lambda doc: len(doc), valid_docs))
-    words_per_valid_sentence = list(map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (sentence_limit - len(doc)), valid_docs))
+
+    segments_per_valid_document = list(map(lambda doc: len(doc), valid_docs))
+    sentences_per_valid_segment = list(map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (segment_limit - len(doc)), valid_docs))
+    words_per_valid_sentences = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: len(sent), seg)) + [0] * (sentence_limit - len(seg)) , doc)), valid_docs))
 
     # 단어가 word_map에 있으면 해당 key 리턴하고 없으면 <unk>의 key 리턴
-    # word_map.get(x, word_map['<unk>'])
-    encoded_train_docs = list(map(lambda doc: list(
-        map(lambda s: list(map(lambda w: word_map.get(w, word_map['<unk>']), s)) + [0] * (word_limit - len(s)),
-            doc)) + [[0] * word_limit] * (sentence_limit - len(doc)), train_docs))
-    encoded_val_docs = list(map(lambda doc: list(
-        map(lambda s: list(map(lambda w: word_map.get(w, word_map['<unk>']), s)) + [0] * (word_limit - len(s)),
-            doc)) + [[0] * word_limit] * (sentence_limit - len(doc)), valid_docs))
+    encoded_train_docs = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: list(map(lambda word: word_map.get(word, word_map['<unk>']),sent)) + [0] * (word_limit - len(sent)), seg)) + [[0] * sentence_limit] * (segment_limit - len(seg)), doc)), train_docs))
+    encoded_val_docs = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: list(map(lambda word: word_map.get(word, word_map['<unk>']),sent)) + [0] * (word_limit - len(sent)), seg)) + [[0] * sentence_limit] * (segment_limit - len(seg)), doc)), valid_docs))
 
 
-    assert len(encoded_train_docs) == len(train_labels) == len(sentences_per_train_document) == len(words_per_train_sentence)
-    assert len(encoded_val_docs) == len(valid_labels) == len(sentences_per_valid_document) == len(words_per_valid_sentence)
+    assert len(encoded_train_docs) == len(train_labels) == len(segments_per_train_document) == len(sentences_per_train_segment) == len(words_per_train_sentences)
+    assert len(encoded_val_docs) == len(valid_labels) == len(segments_per_valid_document) == len(sentences_per_valid_segment) == len(words_per_valid_sentences)
 
 
     # Because of the large data, saving as a JSON can be very slow
     torch.save({'docs': encoded_train_docs,
                 'labels': train_labels,
-                'sentences_per_document': sentences_per_train_document,
-                'words_per_sentence': words_per_train_sentence},
+                'segments_per_document': segments_per_train_document,
+                'sentences_per_segments': sentences_per_train_segment,
+                'words_per_sentence': words_per_train_sentences},
                os.path.join(output_folder, 'TRAIN_data.pth.tar'))
     torch.save({'docs': encoded_val_docs,
                 'labels': valid_labels,
-                'sentences_per_document': sentences_per_valid_document,
-                'words_per_sentence': words_per_valid_sentence},
+                'segments_per_document': segments_per_valid_document,
+                'sentences_per_segments': sentences_per_valid_segment,
+                'words_per_sentence': words_per_valid_sentences},
                os.path.join(output_folder, 'VALID_data.pth.tar'))
 
     # Free some memory
-    del train_docs, encoded_train_docs, train_labels, sentences_per_train_document, words_per_train_sentence
-    del valid_docs, encoded_val_docs, valid_labels, sentences_per_valid_document, words_per_valid_sentence
+    del train_docs, encoded_train_docs, train_labels, segments_per_train_document, sentences_per_train_segment, words_per_train_sentences
+    del valid_docs, encoded_val_docs, valid_labels, segments_per_valid_document, sentences_per_valid_segment, words_per_valid_sentences
 
 
 
@@ -178,28 +185,23 @@ def create_input_files(csv_folder, output_folder, sentence_limit, word_limit, mi
     """
     # Read test data
     print('Reading and preprocessing test data...\n')
-    test_docs, test_labels, _ = read_csv(csv_folder, 'test', sentence_limit, word_limit)
+    test_docs, test_labels, _ = read_csv(csv_folder, 'test', segment_limit, sentence_limit, word_limit)
 
 
-    # Encode and pad
-    print('\nEncoding and padding test data...\n')
-    encoded_test_docs = list(map(lambda doc: list(
-        map(lambda s: list(map(lambda w: word_map.get(w, word_map['<unk>']), s)) + [0] * (word_limit - len(s)),
-            doc)) + [[0] * word_limit] * (sentence_limit - len(doc)), test_docs))
-    sentences_per_test_document = list(map(lambda doc: len(doc), test_docs))
-    words_per_test_sentence = list(
-        map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (sentence_limit - len(doc)), test_docs))
+    segments_per_test_document = list(map(lambda doc: len(doc), test_docs))
+    sentences_per_test_segment = list(map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (segment_limit - len(doc)), test_docs))
+    words_per_test_sentences = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: len(sent), seg)) + [0] * (sentence_limit - len(seg)) , doc)), test_docs))
+    encoded_test_docs = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: list(map(lambda word: word_map.get(word, word_map['<unk>']),sent)) + [0] * (word_limit - len(sent)), seg)) + [[0] * sentence_limit] * (segment_limit - len(seg)), doc)), test_docs))
 
-    # Save
-    print('Saving...\n')
-    assert len(encoded_test_docs) == len(test_labels) == len(sentences_per_test_document) == len(
-        words_per_test_sentence)
+
+    assert len(encoded_test_docs) == len(test_labels) == len(segments_per_test_document) == len(sentences_per_test_segment) == len(words_per_test_sentences)
+
     torch.save({'docs': encoded_test_docs,
                 'labels': test_labels,
-                'sentences_per_document': sentences_per_test_document,
-                'words_per_sentence': words_per_test_sentence},
+                'segments_per_document': segments_per_test_document,
+                'sentences_per_segments': sentences_per_test_segment,
+                'words_per_sentence': words_per_test_sentences},
                os.path.join(output_folder, 'TEST_data.pth.tar'))
-    print('Encoded, padded test data saved to %s.\n' % os.path.abspath(output_folder))
 
     print('All done!\n')
 
@@ -219,11 +221,11 @@ def train_word2vec_model(data_folder, algorithm='skipgram'):
 
     # Read data
 
-    sentences = torch.load(os.path.join(data_folder, 'word2vec_data.pth.tar'))
+    segments = torch.load(os.path.join(data_folder, 'word2vec_data.pth.tar'))
+
 
     # 모든 문서의 sentence들을 통채로 합해주기
-    sentences = list(itertools.chain.from_iterable(sentences))
-
+    sentences = list(itertools.chain.from_iterable(list(itertools.chain.from_iterable(segments))))
     # Activate logging for verbose training
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
 
@@ -274,8 +276,4 @@ def load_word2vec_embeddings(word2vec_file, word_map):
 
     return embeddings, w2v.vector_size
 
-create_input_files(csv_folder='./data',
-                   output_folder='./data',
-                   sentence_limit=15,
-                   word_limit=20,
-                   min_word_count=5)
+train_word2vec_model(data_folder='./data', algorithm='skipgram')

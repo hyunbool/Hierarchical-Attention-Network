@@ -46,7 +46,8 @@ class HANDataset(Dataset):
 
     def __getitem__(self, i):
         return torch.LongTensor(self.data['docs'][i]), \
-               torch.LongTensor([self.data['sentences_per_document'][i]]), \
+               torch.LongTensor([self.data['segments_per_document'][i]]), \
+               torch.LongTensor([self.data['sentences_per_segment'][i]]), \
                torch.LongTensor(self.data['words_per_sentence'][i]), \
                torch.LongTensor([self.data['labels'][i]])
 
@@ -136,8 +137,6 @@ def create_input_files(csv_folder, output_folder, segment_limit, sentence_limit,
     with open(os.path.join(output_folder, 'word_map.json'), 'w') as j:
         json.dump(word_map, j)
 
-    print("train docs: ", len(train_docs))
-    print("="*50)
 
     # 검증 데이터 나누기
     train_docs, valid_docs, train_labels, valid_labels = train_test_split(train_docs, train_labels, test_size=0.3)
@@ -151,9 +150,10 @@ def create_input_files(csv_folder, output_folder, segment_limit, sentence_limit,
     sentences_per_valid_segment = list(map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (segment_limit - len(doc)), valid_docs))
     words_per_valid_sentences = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: len(sent), seg)) + [0] * (sentence_limit - len(seg)) , doc)), valid_docs))
 
+
     # 단어가 word_map에 있으면 해당 key 리턴하고 없으면 <unk>의 key 리턴
-    encoded_train_docs = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: list(map(lambda word: word_map.get(word, word_map['<unk>']),sent)) + [0] * (word_limit - len(sent)), seg)) + [[0] * sentence_limit] * (segment_limit - len(seg)), doc)), train_docs))
-    encoded_val_docs = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: list(map(lambda word: word_map.get(word, word_map['<unk>']),sent)) + [0] * (word_limit - len(sent)), seg)) + [[0] * sentence_limit] * (segment_limit - len(seg)), doc)), valid_docs))
+    encoded_train_docs = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: list(map(lambda word: word_map.get(word, word_map['<unk>']),sent)) + [0] * (word_limit - len(sent)), seg)) + [[0] * word_limit] * (sentence_limit - len(seg)), doc)), train_docs))
+    encoded_val_docs = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: list(map(lambda word: word_map.get(word, word_map['<unk>']), sent)) + [0] * (word_limit - len(sent)), seg)) + [[0] * word_limit] * (sentence_limit - len(seg)), doc)), valid_docs))
 
 
     assert len(encoded_train_docs) == len(train_labels) == len(segments_per_train_document) == len(sentences_per_train_segment) == len(words_per_train_sentences)
@@ -164,13 +164,13 @@ def create_input_files(csv_folder, output_folder, segment_limit, sentence_limit,
     torch.save({'docs': encoded_train_docs,
                 'labels': train_labels,
                 'segments_per_document': segments_per_train_document,
-                'sentences_per_segments': sentences_per_train_segment,
+                'sentences_per_segment': sentences_per_train_segment,
                 'words_per_sentence': words_per_train_sentences},
                os.path.join(output_folder, 'TRAIN_data.pth.tar'))
     torch.save({'docs': encoded_val_docs,
                 'labels': valid_labels,
                 'segments_per_document': segments_per_valid_document,
-                'sentences_per_segments': sentences_per_valid_segment,
+                'sentences_per_segment': sentences_per_valid_segment,
                 'words_per_sentence': words_per_valid_sentences},
                os.path.join(output_folder, 'VALID_data.pth.tar'))
 
@@ -191,7 +191,7 @@ def create_input_files(csv_folder, output_folder, segment_limit, sentence_limit,
     segments_per_test_document = list(map(lambda doc: len(doc), test_docs))
     sentences_per_test_segment = list(map(lambda doc: list(map(lambda s: len(s), doc)) + [0] * (segment_limit - len(doc)), test_docs))
     words_per_test_sentences = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: len(sent), seg)) + [0] * (sentence_limit - len(seg)) , doc)), test_docs))
-    encoded_test_docs = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: list(map(lambda word: word_map.get(word, word_map['<unk>']),sent)) + [0] * (word_limit - len(sent)), seg)) + [[0] * sentence_limit] * (segment_limit - len(seg)), doc)), test_docs))
+    encoded_test_docs = list(map(lambda doc: list(map(lambda seg: list(map(lambda sent: list(map(lambda word: word_map.get(word, word_map['<unk>']), sent)) + [0] * (word_limit - len(sent)), seg)) + [[0] * word_limit] * (sentence_limit - len(seg)), doc)), test_docs))
 
 
     assert len(encoded_test_docs) == len(test_labels) == len(segments_per_test_document) == len(sentences_per_test_segment) == len(words_per_test_sentences)
@@ -199,7 +199,7 @@ def create_input_files(csv_folder, output_folder, segment_limit, sentence_limit,
     torch.save({'docs': encoded_test_docs,
                 'labels': test_labels,
                 'segments_per_document': segments_per_test_document,
-                'sentences_per_segments': sentences_per_test_segment,
+                'sentences_per_segment': sentences_per_test_segment,
                 'words_per_sentence': words_per_test_sentences},
                os.path.join(output_folder, 'TEST_data.pth.tar'))
 
@@ -259,7 +259,7 @@ def load_word2vec_embeddings(word2vec_file, word_map):
     # Load word2vec model into memory
     w2v = gensim.models.KeyedVectors.load(word2vec_file, mmap='r')
 
-    print("\nEmbedding length is %d.\n" % w2v.vector_size)
+
 
     # Create tensor to hold embeddings for words that are in-corpus
     # word_map 내 단어들에 대한 임베딩 벡터 만들기
@@ -267,13 +267,18 @@ def load_word2vec_embeddings(word2vec_file, word_map):
     init_embedding(embeddings)
 
     # Read embedding file
-    print("Loading embeddings...")
+
     for word in word_map:
         if word in w2v.vocab:
             embeddings[word_map[word]] = torch.FloatTensor(w2v[word])
 
-    print("Done.\n Embedding vocabulary: %d.\n" % len(word_map))
 
     return embeddings, w2v.vector_size
 
-train_word2vec_model(data_folder='./data', algorithm='skipgram')
+
+create_input_files(csv_folder='./data',
+                   output_folder='./data',
+                   segment_limit=3,
+                   sentence_limit=20,
+                   word_limit=20,
+                   min_word_count=5)

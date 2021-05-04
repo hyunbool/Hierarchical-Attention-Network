@@ -62,17 +62,18 @@ def train(train_loader, model, criterion, optimizer, epoch, device):
     grad_clip = None  # clip gradients at this value
 
     # Batches
-    for i, (documents, sentences_per_document, words_per_sentence, labels) in enumerate(train_loader):
+    for i, (documents, segments_per_document, sentences_per_segment, words_per_sentence, labels) in enumerate(train_loader):
 
         data_time.update(time.time() - start)
 
         documents = documents.to(device)  # (batch_size, sentence_limit, word_limit)
-        sentences_per_document = sentences_per_document.squeeze(1).to(device)  # (batch_size)
-        words_per_sentence = words_per_sentence.to(device)  # (batch_size, sentence_limit)
+        segments_per_document = segments_per_document.squeeze(1).to(device)  # (batch_size)
+        sentences_per_segment = sentences_per_segment.to(device)  # (batch_size, sentence_limit)
+        words_per_sentence = words_per_sentence.to(device)
         labels = labels.squeeze(1).to(device)  # (batch_size)
 
         # Forward prop.
-        scores, word_alphas, sentence_alphas = model(documents, sentences_per_document, words_per_sentence)
+        scores, word_alphas, sentence_alphas = model(documents, segments_per_document, sentences_per_segment, words_per_sentence)
 
         # Loss
         loss = criterion(scores, labels)  # scalar
@@ -119,15 +120,16 @@ def evaluate(model, test_loader, criterion, device):
     accs = AverageMeter()  # accuracies
     losses = AverageMeter()
     # Evaluate in batches
-    for i, (documents, sentences_per_document, words_per_sentence, labels) in enumerate(tqdm(test_loader, desc='Evaluating')):
+    for i, (documents, segments_per_document, sentences_per_segment, words_per_sentence, labels) in enumerate(tqdm(test_loader, desc='Evaluating')):
 
         documents = documents.to(device)  # (batch_size, sentence_limit, word_limit)
-        sentences_per_document = sentences_per_document.squeeze(1).to(device)  # (batch_size)
-        words_per_sentence = words_per_sentence.to(device)  # (batch_size, sentence_limit)
+        segments_per_document = segments_per_document.squeeze(1).to(device)  # (batch_size)
+        sentences_per_segment = sentences_per_segment.to(device)  # (batch_size, sentence_limit)
+        words_per_sentence = words_per_sentence.to(device)
         labels = labels.squeeze(1).to(device)  # (batch_size)
 
         # Forward prop.
-        scores, word_alphas, sentence_alphas = model(documents, sentences_per_document, words_per_sentence)
+        scores, word_alphas, sentence_alphas = model(documents, segments_per_document, sentences_per_segment, words_per_sentence)
 
         loss = criterion(scores, labels)  # scalar
         total_loss += loss.item()

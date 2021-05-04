@@ -1,9 +1,9 @@
 import torch
 NGRAMS = 2
 import os
-from model import GRU, HierarchialAttentionNetwork
+from model import HierarchialAttentionNetwork
 from utils import train, evaluate
-from dataset import HANDataset, load_word2vec_embeddings
+from dataset import *
 import json
 
 USE_CUDA = torch.cuda.is_available()
@@ -11,10 +11,12 @@ device = torch.device("cuda" if USE_CUDA else "cpu")
 
 data_path = "./data/"
 
+
 if not os.path.isfile("./data/TRAIN_data.pth.tar"):
     create_input_files(csv_folder='./data',
                        output_folder='./data',
-                       sentence_limit=15,
+                       segment_limit=3,
+                       sentence_limit=20,
                        word_limit=20,
                        min_word_count=5)
 if not os.path.isfile("./data/word2vec_model"):
@@ -32,10 +34,13 @@ n_classes = 2
 embed_dim = 32
 word_rnn_size = 50  # word RNN size
 sentence_rnn_size = 50  # character RNN size
+segment_rnn_size = 50
 word_rnn_layers = 1  # number of layers in character RNN
 sentence_rnn_layers = 1  # number of layers in word RNN
+segment_rnn_layers = 1
 word_att_size = 100  # size of the word-level attention layer (also the size of the word context vector)
 sentence_att_size = 100  # size of the sentence-level attention layer (also the size of the sentence context vector)
+segment_att_size = 100
 dropout = 0.3  # dropout
 fine_tune_word_embeddings = True  # fine-tune word embeddings?
 vocab_size = len(word_map)
@@ -48,16 +53,20 @@ model = HierarchialAttentionNetwork(n_classes=n_classes,
                                     emb_size=embed_dim,
                                     word_rnn_size=word_rnn_size,
                                     sentence_rnn_size=sentence_rnn_size,
+                                    segment_rnn_size=segment_rnn_size,
                                     word_rnn_layers=word_rnn_layers,
                                     sentence_rnn_layers=sentence_rnn_layers,
+                                    segment_rnn_layers=segment_rnn_layers,
                                     word_att_size=word_att_size,
                                     sentence_att_size=sentence_att_size,
+                                    segment_att_size=segment_att_size,
                                     dropout=dropout)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 criterion = torch.nn.CrossEntropyLoss().to(device)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.9)
+
 
 train_loader = torch.utils.data.DataLoader(HANDataset(data_path, 'train'), batch_size=batch_size, shuffle=True,
                                            num_workers=workers, pin_memory=True)

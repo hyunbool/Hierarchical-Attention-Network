@@ -11,15 +11,18 @@ from torch.autograd import Variable
 from torch import optim
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-
+import numpy as np
 
 use_cuda = torch.cuda.is_available()
 
 SOS_token = 0
 EOS_token = 1
-
-
 MAX_LENGTH = 10
+
+plt.switch_backend('agg')
+
+
+
 
 class Lang:
     def __init__(self, name):

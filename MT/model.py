@@ -1,3 +1,4 @@
+# https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
 from __future__ import unicode_literals, print_function, division
 from io import open
 import unicodedata

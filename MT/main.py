@@ -22,3 +22,5 @@ if use_cuda:
     attn_decoder1 = attn_decoder1.cuda()
 
 trainIters(encoder1, attn_decoder1, 75000, input_lang, output_lang, pairs, print_every=5000)
+
+evaluateRandomly(encoder1, attn_decoder1)
